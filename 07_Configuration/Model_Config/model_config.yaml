@@ -1,0 +1,20 @@
+# AI/ML Model Parameter Configuration
+models:
+  yolov8_pose:
+    path: "03_AI_ML_Models/Pose_Models/yolov8n-pose.pt"
+    confidence_threshold: 0.35
+    inference_img_size: 480
+    device: "cpu"
+    keypoints_count: 17
+  yolov8_detection:
+    path: "03_AI_ML_Models/YOLO_Models/yolov8n.pt"
+    confidence_threshold: 0.40
+    iou_threshold: 0.45
+  tracker:
+    history_length: 25
+    jitter_deadzone_px: 2.0
+    max_disappeared_frames: 15
+  prediction:
+    transition_model: "markov"
+    temporal_window: 15
+    forecast_horizon_seconds: 1.0

@@ -1,0 +1,32 @@
+# Hardware Serial & Microcontroller Configuration
+serial:
+  baudrate: 9600
+  timeout_seconds: 1.0
+  min_send_interval_sec: 0.15
+  auto_detect_ports: true
+  supported_chipsets:
+    - "arduino"
+    - "ch340"
+    - "usb-serial"
+    - "ftdi"
+led_mapping:
+  happy:
+    pin: 2
+    color: "Green"
+    resistor_ohm: 220
+  sad:
+    pin: 3
+    color: "Blue"
+    resistor_ohm: 220
+  angry:
+    pin: 4
+    color: "Red"
+    resistor_ohm: 220
+  surprise:
+    pin: 5
+    color: "Yellow"
+    resistor_ohm: 220
+  neutral:
+    pin: 6
+    color: "White/Amber"
+    resistor_ohm: 220

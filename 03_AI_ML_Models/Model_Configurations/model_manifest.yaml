@@ -1,0 +1,34 @@
+# VisionDNA Neural Model Catalog & Manifest
+models:
+  pose_estimation:
+    name: "YOLOv8n-Pose"
+    filename: "yolov8n-pose.pt"
+    location: "03_AI_ML_Models/Pose_Models/yolov8n-pose.pt"
+    framework: "PyTorch / Ultralytics"
+    architecture: "YOLOv8 Nano Backbone + Keypoint Regression Head"
+    input_resolution: [480, 480]
+    output_keypoints: 17
+    keypoint_standard: "COCO Human Pose Format"
+    inference_device: "CPU / CUDA"
+  person_detection:
+    name: "YOLOv8n"
+    filename: "yolov8n.pt"
+    location: "03_AI_ML_Models/YOLO_Models/yolov8n.pt"
+    framework: "PyTorch / Ultralytics"
+    input_resolution: [640, 640]
+    target_class_id: 0
+    target_class_name: "person"
+  facial_emotion_ferplus:
+    name: "FERPlus Emotion Recognition"
+    filename: "emotion_ferplus.onnx"
+    location: "03_AI_ML_Models/Emotion_Models/emotion_ferplus.onnx"
+    framework: "ONNX Runtime / OpenCV DNN"
+    input_shape: [1, 1, 64, 64]
+    classes: ["Neutral", "Happy", "Surprise", "Sad", "Angry", "Disgust", "Fear", "Contempt"]
+  facial_emotion_fer2013:
+    name: "FER2013 Emotion Model"
+    filename: "emotion_model.hdf5"
+    location: "03_AI_ML_Models/Emotion_Models/emotion_model.hdf5"
+    framework: "Keras / TensorFlow"
+    input_shape: [1, 48, 48, 1]
+    classes: ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]

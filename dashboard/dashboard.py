@@ -21,8 +21,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from src.camera import VideoStream
 from src.detector import UnifiedPersonPoseDetector
-from src.tracker import PersonTracker
-from src.activity import ActivityClassifier
+from src.tracker import PersonTracker, TrackedPerson
+from src.activity import ActivityClassifier, ActivityResult
 from src.digital_twin import DigitalTwinEngine
 from src.prediction import ActivityPredictor
 from src.risk_engine import RiskEngine
@@ -598,8 +598,21 @@ with st.sidebar:
 @st.cache_resource
 def load_pose_detector():
     """Initializes and caches YOLOv8-Pose engine in memory."""
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    model_candidates = [
+        os.path.join(root_dir, "models", "person_detection", "yolov8n-pose.pt"),
+        os.path.join(root_dir, "03_AI_ML_Models", "Pose_Models", "yolov8n-pose.pt"),
+        "models/person_detection/yolov8n-pose.pt",
+        "yolov8n-pose.pt",
+    ]
+    model_file = "yolov8n-pose.pt"
+    for candidate in model_candidates:
+        if os.path.exists(candidate):
+            model_file = candidate
+            break
+
     detector = UnifiedPersonPoseDetector(
-        model_path="models/person_detection/yolov8n-pose.pt",
+        model_path=model_file,
         confidence_threshold=0.35,
     )
     return detector
@@ -754,6 +767,7 @@ Camera 0 Connected
     prev_time = time.time()
     fps = 0.0
     incident_logs = []
+    frame_num = 0
 
     try:
         while run_live_camera:
@@ -761,6 +775,9 @@ Camera 0 Connected
             if not ret or frame is None:
                 time.sleep(0.01)
                 continue
+
+            frame_num += 1
+            time.sleep(0.005)  # Yield GIL for smooth event loop processing & instant UI clicks
 
             h, w, _ = frame.shape
 
@@ -873,69 +890,7 @@ Camera 0 Connected
                 fps = 0.85 * fps + 0.15 * (1.0 / dt) if fps > 0 else (1.0 / dt)
             prev_time = curr_time
 
-            # Update Metric Cards
-            metric_tracked_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Active Entities</div>
-<div class="metric-number">{len(tracks):02d}</div>
-<div class="metric-hint">Tracking in Frame</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            risk_color = "#DC2626" if highest_risk_level == "HIGH" else ("#D97706" if highest_risk_level == "MEDIUM" else "#059669")
-            zone_text = "Alert (Breach)" if highest_risk_level == "HIGH" else ("Warning" if highest_risk_level == "MEDIUM" else "Safe")
-            metric_risk_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Zone Status</div>
-<div class="metric-number" style="color: {risk_color};">{zone_text}</div>
-<div class="metric-hint">Risk Score: {highest_risk_score:.0f} / 100</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            metric_activity_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Motion State</div>
-<div class="metric-number" style="font-size: 1.12rem;">{dominant_motion_state[:20]}</div>
-<div class="metric-hint">Real-Time Kinematics</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            metric_fps_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Processing Speed</div>
-<div class="metric-number" style="color: #0284C7;">{fps:.1f} FPS</div>
-<div class="metric-hint">{1000.0/max(1.0, fps):.1f} ms Latency</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            # Update Alert Banners
-            if highest_risk_level == "HIGH":
-                alert_placeholder.markdown(
-                    f"""<div class="alert-critical">
-<b>Restricted Zone Alert:</b> {primary_alert or 'Critical safety breach detected in monitored area.'}
-</div>""",
-                    unsafe_allow_html=True,
-                )
-            elif highest_risk_level == "MEDIUM":
-                alert_placeholder.markdown(
-                    f"""<div class="alert-warning">
-<b>Safety Warning:</b> {primary_alert or 'Subject approaching restricted zone boundary.'}
-</div>""",
-                    unsafe_allow_html=True,
-                )
-            else:
-                alert_placeholder.markdown(
-                    """<div class="alert-normal">
-<b>Room Status: Secure</b> — All detected individuals are within safe boundaries.
-</div>""",
-                    unsafe_allow_html=True,
-                )
-
-            # Render Viewports
+            # Render Viewports every frame for fluid video playback
             annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
             cam_placeholder.image(annotated_rgb, use_container_width=True)
 
@@ -949,25 +904,85 @@ Camera 0 Connected
             twin_rgb = cv2.cvtColor(twin_canvas, cv2.COLOR_BGR2RGB)
             twin_placeholder.image(twin_rgb, use_container_width=True)
 
-            # Status Table
-            if len(status_rows) > 0:
-                df = pd.DataFrame(status_rows)
-                table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                table_placeholder.info("No individuals currently visible in camera field of view.")
+            # Throttle heavy Markdown/DataFrame UI re-renders to every 3 frames for zero lag
+            if frame_num % 3 == 0:
+                metric_tracked_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Active Entities</div>
+<div class="metric-number">{len(tracks):02d}</div>
+<div class="metric-hint">Tracking in Frame</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
 
-            # Prediction Panel
-            if prediction_summary and prediction_summary.is_sufficient_data:
-                pred_prob_pct = int(prediction_summary.probability * 100)
-                pred_zone = "Restricted Zone" if prediction_summary.trajectory_trend == "Approaching Restricted Zone" else "Safe"
-                pred_zone_color = "#DC2626" if pred_zone == "Restricted Zone" else "#0284C7"
-                
-                pred_html = f"""<div class="forecast-box">
+                risk_color = "#DC2626" if highest_risk_level == "HIGH" else ("#D97706" if highest_risk_level == "MEDIUM" else "#059669")
+                zone_text = "Alert (Breach)" if highest_risk_level == "HIGH" else ("Warning" if highest_risk_level == "MEDIUM" else "Safe")
+                metric_risk_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Zone Status</div>
+<div class="metric-number" style="color: {risk_color};">{zone_text}</div>
+<div class="metric-hint">Risk Score: {highest_risk_score:.0f} / 100</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                metric_activity_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Motion State</div>
+<div class="metric-number" style="font-size: 1.12rem;">{dominant_motion_state[:20]}</div>
+<div class="metric-hint">Real-Time Kinematics</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                metric_fps_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Processing Speed</div>
+<div class="metric-number" style="color: #0284C7;">{fps:.1f} FPS</div>
+<div class="metric-hint">{1000.0/max(1.0, fps):.1f} ms Latency</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                if highest_risk_level == "HIGH":
+                    alert_placeholder.markdown(
+                        f"""<div class="alert-critical">
+<b>Restricted Zone Alert:</b> {primary_alert or 'Critical safety breach detected in monitored area.'}
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+                elif highest_risk_level == "MEDIUM":
+                    alert_placeholder.markdown(
+                        f"""<div class="alert-warning">
+<b>Safety Warning:</b> {primary_alert or 'Subject approaching restricted zone boundary.'}
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    alert_placeholder.markdown(
+                        """<div class="alert-normal">
+<b>Room Status: Secure</b> — All detected individuals are within safe boundaries.
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+
+                if len(status_rows) > 0:
+                    df = pd.DataFrame(status_rows)
+                    table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    table_placeholder.info("No individuals currently visible in camera field of view.")
+
+                if prediction_summary and prediction_summary.is_sufficient_data:
+                    pred_prob_pct = int(prediction_summary.probability * 100)
+                    pred_zone = "Restricted Zone" if prediction_summary.trajectory_trend == "Approaching Restricted Zone" else "Safe"
+                    pred_zone_color = "#DC2626" if pred_zone == "Restricted Zone" else "#0284C7"
+                    
+                    pred_html = f"""<div class="forecast-box">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
 <span style="color: #64748B; font-size: 0.80rem; font-weight: 600;">Next-State Forecast</span>
 <span style="background: rgba(2, 132, 199, 0.10); color: #0284C7; font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">Markov Model</span>
 </div>
-<h3 style="margin: 0 0 10px 0; color: {'#0F172A' if is_light else '#F8FAFC'}; font-size: 1.05rem;">Subject #{prediction_summary.current_activity}</h3>
+<h3 style="margin: 0 0 10px 0; color: {'#0F172A' if is_light else '#F8FAFC'}; font-size: 1.05rem;">Predicted Activity: {prediction_summary.predicted_next_activity}</h3>
 <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px;">
 <div>Current State: <b style="color: #059669;">{prediction_summary.current_activity}</b></div>
 <div>Predicted Zone: <b style="color: {pred_zone_color};">{pred_zone}</b></div>
@@ -980,16 +995,15 @@ Camera 0 Connected
 Trajectory Trend: <span style="color: {'#0F172A' if is_light else '#F8FAFC'}; font-weight: 600;">{prediction_summary.trajectory_trend}</span> | Coordinate: <code>X:{prediction_summary.predicted_future_position[0]}, Y:{prediction_summary.predicted_future_position[1]}</code>
 </div>
 </div>"""
-                pred_placeholder.markdown(pred_html, unsafe_allow_html=True)
-            else:
-                pred_placeholder.info("Tracking person positions to compute predictive trajectory vectors.")
+                    pred_placeholder.markdown(pred_html, unsafe_allow_html=True)
+                else:
+                    pred_placeholder.info("Tracking person positions to compute predictive trajectory vectors.")
 
-            # Incident Log
-            if len(incident_logs) > 0:
-                inc_df = pd.DataFrame(incident_logs[::-1])
-                incidents_placeholder.dataframe(inc_df, use_container_width=True, hide_index=True)
-            else:
-                incidents_placeholder.success("Session active — no safety incidents detected.")
+                if len(incident_logs) > 0:
+                    inc_df = pd.DataFrame(incident_logs[::-1])
+                    incidents_placeholder.dataframe(inc_df, use_container_width=True, hide_index=True)
+                else:
+                    incidents_placeholder.success("Session active — no safety incidents detected.")
 
     finally:
         stream.release()
@@ -1167,6 +1181,8 @@ File Analyzer
                 continue
 
             processed_count += 1
+            time.sleep(0.005)  # Yield GIL for smooth event loop processing & instant UI clicks
+
             if 'frame_stride' in locals() and frame_stride > 1 and (processed_count % frame_stride != 0):
                 continue
 
@@ -1281,69 +1297,7 @@ File Analyzer
                 fps = 0.85 * fps + 0.15 * (1.0 / dt) if fps > 0 else (1.0 / dt)
             prev_time = curr_time
 
-            # Update Metrics
-            metric_tracked_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Active Entities</div>
-<div class="metric-number">{len(tracks):02d}</div>
-<div class="metric-hint">Detected in Video</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            risk_color = "#DC2626" if highest_risk_level == "HIGH" else ("#D97706" if highest_risk_level == "MEDIUM" else "#059669")
-            zone_text = "Alert (Breach)" if highest_risk_level == "HIGH" else ("Warning" if highest_risk_level == "MEDIUM" else "Safe")
-            metric_risk_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Zone Status</div>
-<div class="metric-number" style="color: {risk_color};">{zone_text}</div>
-<div class="metric-hint">Risk Score: {highest_risk_score:.0f} / 100</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            metric_activity_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Motion State</div>
-<div class="metric-number" style="font-size: 1.12rem;">{dominant_motion_state[:20]}</div>
-<div class="metric-hint">Video Kinematics</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            metric_fps_ph.markdown(
-                f"""<div class="metric-card">
-<div class="metric-caption">Processing Speed</div>
-<div class="metric-number" style="color: #0284C7;">{fps:.1f} FPS</div>
-<div class="metric-hint">{1000.0/max(1.0, fps):.1f} ms Latency</div>
-</div>""",
-                unsafe_allow_html=True,
-            )
-
-            # Update Alert Banners
-            if highest_risk_level == "HIGH":
-                alert_placeholder.markdown(
-                    f"""<div class="alert-critical">
-<b>Restricted Zone Alert:</b> {primary_alert or 'Critical safety breach detected in monitored area.'}
-</div>""",
-                    unsafe_allow_html=True,
-                )
-            elif highest_risk_level == "MEDIUM":
-                alert_placeholder.markdown(
-                    f"""<div class="alert-warning">
-<b>Safety Warning:</b> {primary_alert or 'Subject approaching restricted zone boundary.'}
-</div>""",
-                    unsafe_allow_html=True,
-                )
-            else:
-                alert_placeholder.markdown(
-                    f"""<div class="alert-normal">
-<b>Room Status: Secure</b> — All detected individuals are within safe boundaries. Time: {stream.get_current_time_str()}
-</div>""",
-                    unsafe_allow_html=True,
-                )
-
-            # Render Viewports
+            # Render Viewports every frame for fluid video playback
             annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
             cam_placeholder.image(annotated_rgb, use_container_width=True)
 
@@ -1357,32 +1311,92 @@ File Analyzer
             twin_rgb = cv2.cvtColor(twin_canvas, cv2.COLOR_BGR2RGB)
             twin_placeholder.image(twin_rgb, use_container_width=True)
 
-            seek_slider_ph.markdown(
-                f"""<div style="font-family: 'JetBrains Mono', monospace; font-size: 0.80rem; color: #64748B; text-align: right; padding-top: 8px;">
+            # Throttle heavy Markdown/DataFrame UI re-renders to every 3 frames for zero lag
+            if processed_count % 3 == 0:
+                metric_tracked_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Active Entities</div>
+<div class="metric-number">{len(tracks):02d}</div>
+<div class="metric-hint">Detected in Video</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                risk_color = "#DC2626" if highest_risk_level == "HIGH" else ("#D97706" if highest_risk_level == "MEDIUM" else "#059669")
+                zone_text = "Alert (Breach)" if highest_risk_level == "HIGH" else ("Warning" if highest_risk_level == "MEDIUM" else "Safe")
+                metric_risk_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Zone Status</div>
+<div class="metric-number" style="color: {risk_color};">{zone_text}</div>
+<div class="metric-hint">Risk Score: {highest_risk_score:.0f} / 100</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                metric_activity_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Motion State</div>
+<div class="metric-number" style="font-size: 1.12rem;">{dominant_motion_state[:20]}</div>
+<div class="metric-hint">Video Kinematics</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                metric_fps_ph.markdown(
+                    f"""<div class="metric-card">
+<div class="metric-caption">Processing Speed</div>
+<div class="metric-number" style="color: #0284C7;">{fps:.1f} FPS</div>
+<div class="metric-hint">{1000.0/max(1.0, fps):.1f} ms Latency</div>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                if highest_risk_level == "HIGH":
+                    alert_placeholder.markdown(
+                        f"""<div class="alert-critical">
+<b>Restricted Zone Alert:</b> {primary_alert or 'Critical safety breach detected in monitored area.'}
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+                elif highest_risk_level == "MEDIUM":
+                    alert_placeholder.markdown(
+                        f"""<div class="alert-warning">
+<b>Safety Warning:</b> {primary_alert or 'Subject approaching restricted zone boundary.'}
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    alert_placeholder.markdown(
+                        f"""<div class="alert-normal">
+<b>Room Status: Secure</b> — All detected individuals are within safe boundaries. Time: {stream.get_current_time_str()}
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+
+                seek_slider_ph.markdown(
+                    f"""<div style="font-family: 'JetBrains Mono', monospace; font-size: 0.80rem; color: #64748B; text-align: right; padding-top: 8px;">
 Timeline: <b style="color: {'#0F172A' if is_light else '#F8FAFC'};">{stream.get_current_time_str()}</b> ({stream.get_current_frame_idx()}/{stream.total_frames} frames)
 </div>""",
-                unsafe_allow_html=True,
-            )
+                    unsafe_allow_html=True,
+                )
 
-            # Status Table
-            if len(status_rows) > 0:
-                df = pd.DataFrame(status_rows)
-                table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                table_placeholder.info("No entities currently detected in the active video frame.")
+                if len(status_rows) > 0:
+                    df = pd.DataFrame(status_rows)
+                    table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    table_placeholder.info("No entities currently detected in the active video frame.")
 
-            # Prediction Panel
-            if prediction_summary and prediction_summary.is_sufficient_data:
-                pred_prob_pct = int(prediction_summary.probability * 100)
-                pred_zone = "Restricted Zone" if prediction_summary.trajectory_trend == "Approaching Restricted Zone" else "Safe"
-                pred_zone_color = "#DC2626" if pred_zone == "Restricted Zone" else "#0284C7"
-                
-                pred_html = f"""<div class="forecast-box">
+                if prediction_summary and prediction_summary.is_sufficient_data:
+                    pred_prob_pct = int(prediction_summary.probability * 100)
+                    pred_zone = "Restricted Zone" if prediction_summary.trajectory_trend == "Approaching Restricted Zone" else "Safe"
+                    pred_zone_color = "#DC2626" if pred_zone == "Restricted Zone" else "#0284C7"
+                    
+                    pred_html = f"""<div class="forecast-box">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
 <span style="color: #64748B; font-size: 0.80rem; font-weight: 600;">Next-State Forecast</span>
 <span style="background: rgba(2, 132, 199, 0.10); color: #0284C7; font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">Markov Model</span>
 </div>
-<h3 style="margin: 0 0 10px 0; color: {'#0F172A' if is_light else '#F8FAFC'}; font-size: 1.05rem;">Subject #{prediction_summary.current_activity}</h3>
+<h3 style="margin: 0 0 10px 0; color: {'#0F172A' if is_light else '#F8FAFC'}; font-size: 1.05rem;">Predicted Activity: {prediction_summary.predicted_next_activity}</h3>
 <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px;">
 <div>Current State: <b style="color: #059669;">{prediction_summary.current_activity}</b></div>
 <div>Predicted Zone: <b style="color: {pred_zone_color};">{pred_zone}</b></div>
@@ -1395,16 +1409,15 @@ Timeline: <b style="color: {'#0F172A' if is_light else '#F8FAFC'};">{stream.get_
 Trajectory Trend: <span style="color: {'#0F172A' if is_light else '#F8FAFC'}; font-weight: 600;">{prediction_summary.trajectory_trend}</span> | Coordinate: <code>X:{prediction_summary.predicted_future_position[0]}, Y:{prediction_summary.predicted_future_position[1]}</code>
 </div>
 </div>"""
-                pred_placeholder.markdown(pred_html, unsafe_allow_html=True)
-            else:
-                pred_placeholder.info("Tracking person positions to compute predictive trajectory vectors.")
+                    pred_placeholder.markdown(pred_html, unsafe_allow_html=True)
+                else:
+                    pred_placeholder.info("Tracking person positions to compute predictive trajectory vectors.")
 
-            # Incident Log
-            if len(incident_logs) > 0:
-                inc_df = pd.DataFrame(incident_logs[::-1])
-                incidents_placeholder.dataframe(inc_df, use_container_width=True, hide_index=True)
-            else:
-                incidents_placeholder.success(f"Session active — no safety incidents detected as of {stream.get_current_time_str()}.")
+                if len(incident_logs) > 0:
+                    inc_df = pd.DataFrame(incident_logs[::-1])
+                    incidents_placeholder.dataframe(inc_df, use_container_width=True, hide_index=True)
+                else:
+                    incidents_placeholder.success(f"Session active — no safety incidents detected as of {stream.get_current_time_str()}.")
 
     finally:
         stream.release()
@@ -1462,16 +1475,221 @@ Controlled Testing Environment
         )
         twin_placeholder = st.empty()
 
+    risk_engine = RiskEngine()
     digital_twin = DigitalTwinEngine()
-    ret, frame = stream.read()
-    if ret and frame is not None:
-        cam_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
-        twin_canvas = digital_twin.render_canvas(width=640, height=480, theme_colors=cv_theme)
-        twin_placeholder.image(cv2.cvtColor(twin_canvas, cv2.COLOR_BGR2RGB), use_container_width=True)
+    predictor = ActivityPredictor()
+    tracker = PersonTracker()
 
-    st.markdown(
-        f"""<div class="alert-normal" style="background: #F0F9FF; border-color: #BAE6FD; color: #0369A1;">
-<b>Active Synthetic Scenario:</b> {demo_scenario}. This controlled test sandbox validates incident alarms and digital twin synchronization.
-</div>""",
-        unsafe_allow_html=True,
+    ret, frame = stream.read()
+    if not ret or frame is None:
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        frame[:] = (15, 23, 42)
+
+    annotated_frame = frame.copy()
+    if enable_danger_zone:
+        annotated_frame = risk_engine.draw_zones(annotated_frame)
+
+    simulated_tracks = []
+    simulated_act_res = []
+
+    if demo_scenario == "Zone Approach Simulation":
+        p1 = TrackedPerson(
+            track_id=1,
+            bbox=(430, 100, 520, 300),
+            confidence=0.92,
+            center=(475, 200),
+            velocity=1.8,
+            direction="Right",
+            history=[(time.time() - 0.5, 420, 200), (time.time(), 475, 200)],
+        )
+        act1 = ActivityResult(activity="Walking", motion_state="Active Locomotion (Walking Right @ 1.8 m/s)", confidence=0.92, posture_summary="Upright Locomotion")
+        simulated_tracks.append(p1)
+        simulated_act_res.append(act1)
+
+    elif demo_scenario == "Critical Fall Anomaly":
+        p1 = TrackedPerson(
+            track_id=1,
+            bbox=(200, 310, 440, 380),
+            confidence=0.95,
+            center=(320, 345),
+            velocity=0.0,
+            direction="Stationary",
+            history=[(time.time(), 320, 345)],
+        )
+        act1 = ActivityResult(activity="Falling", motion_state="Critical Fall Hazard (Horizontal Posture)", confidence=0.95, posture_summary="Horizontal Floor (78.5° Spine)")
+        simulated_tracks.append(p1)
+        simulated_act_res.append(act1)
+
+    elif demo_scenario == "Proximity Alert":
+        p1 = TrackedPerson(
+            track_id=1,
+            bbox=(200, 150, 270, 380),
+            confidence=0.89,
+            center=(235, 265),
+            velocity=0.5,
+            direction="Right",
+            history=[(time.time(), 235, 265)],
+        )
+        p2 = TrackedPerson(
+            track_id=2,
+            bbox=(250, 150, 320, 380),
+            confidence=0.91,
+            center=(270, 265),
+            velocity=0.4,
+            direction="Right",
+            history=[(time.time(), 270, 265)],
+        )
+        act1 = ActivityResult(activity="Walking", motion_state="Active Locomotion (Walking)", confidence=0.89, posture_summary="Upright Locomotion")
+        act2 = ActivityResult(activity="Walking", motion_state="Active Locomotion (Walking)", confidence=0.91, posture_summary="Upright Locomotion")
+        simulated_tracks.extend([p1, p2])
+        simulated_act_res.extend([act1, act2])
+
+    else:  # "Standard Room Walk"
+        p1 = TrackedPerson(
+            track_id=1,
+            bbox=(180, 140, 250, 380),
+            confidence=0.94,
+            center=(215, 260),
+            velocity=1.1,
+            direction="Right",
+            history=[(time.time() - 0.5, 180, 260), (time.time(), 215, 260)],
+        )
+        act1 = ActivityResult(activity="Walking", motion_state="Active Locomotion (Walking Right @ 1.1 m/s)", confidence=0.94, posture_summary="Upright Locomotion")
+        simulated_tracks.append(p1)
+        simulated_act_res.append(act1)
+
+    status_rows = []
+    incident_logs = []
+    highest_risk_score = 0.0
+    highest_risk_level = "LOW"
+    primary_alert = None
+    prediction_summary = None
+
+    for person, act_res in zip(simulated_tracks, simulated_act_res):
+        pred_res = predictor.predict(
+            person.track_id,
+            act_res.activity,
+            person.velocity,
+            person.center,
+            danger_zones=risk_engine.danger_zones if enable_danger_zone else None,
+        )
+        prediction_summary = pred_res
+        risk_res = risk_engine.assess(person, simulated_tracks, act_res, pred_res)
+
+        if risk_res.risk_score > highest_risk_score:
+            highest_risk_score = risk_res.risk_score
+            highest_risk_level = risk_res.risk_level
+            if len(risk_res.all_reasons) > 0:
+                primary_alert = f"Subject #{person.track_id:02d}: {risk_res.all_reasons[0]}"
+
+        current_timecode = datetime.datetime.now().strftime("%H:%M:%S")
+        if risk_res.in_danger_zone or risk_res.is_fall:
+            log_msg = f"Person #{person.track_id:02d}: {risk_res.primary_reason}"
+            incident_logs.append({
+                "Timestamp": current_timecode,
+                "Severity": "Critical",
+                "Entity": f"P{person.track_id:02d}",
+                "Event": log_msg,
+                "Confidence": f"{int(person.confidence*100)}%",
+            })
+        elif risk_res.approaching_danger_zone or risk_res.is_collision_risk:
+            log_msg = f"Person #{person.track_id:02d}: {risk_res.primary_reason}"
+            incident_logs.append({
+                "Timestamp": current_timecode,
+                "Severity": "Warning",
+                "Entity": f"P{person.track_id:02d}",
+                "Event": log_msg,
+                "Confidence": f"{int(person.confidence*100)}%",
+            })
+
+        digital_twin.update_twin(
+            person=person,
+            activity_res=act_res,
+            risk_score=risk_res.risk_score,
+            risk_level=risk_res.risk_level,
+            risk_reasons=risk_res.all_reasons,
+            predicted_activity=pred_res.predicted_next_activity,
+            prediction_conf=pred_res.probability,
+        )
+
+        zone_label = "Restricted" if risk_res.in_danger_zone else "Safe"
+        status_label = "Alert" if (risk_res.in_danger_zone or risk_res.is_fall) else "Normal"
+
+        status_rows.append({
+            "ID": f"P{person.track_id:02d}",
+            "Object": "Person",
+            "Confidence": f"{int(person.confidence*100)}%",
+            "Zone": zone_label,
+            "Direction": person.direction,
+            "Speed": f"{person.velocity:.1f} m/s",
+            "Motion State": act_res.motion_state,
+            "Status": status_label,
+        })
+
+    if enable_trajectories:
+        annotated_frame = tracker.draw_tracks(annotated_frame, simulated_tracks)
+
+    cam_placeholder.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+
+    twin_canvas = digital_twin.render_canvas(
+        width=640,
+        height=480,
+        theme_colors=cv_theme,
+        danger_zones=risk_engine.danger_zones if enable_danger_zone else None,
     )
+    twin_placeholder.image(cv2.cvtColor(twin_canvas, cv2.COLOR_BGR2RGB), use_container_width=True)
+
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+    if highest_risk_level == "HIGH":
+        st.markdown(f'<div class="alert-critical"><b>Critical Hazard Alert:</b> {primary_alert}</div>', unsafe_allow_html=True)
+    elif highest_risk_level == "MEDIUM":
+        st.markdown(f'<div class="alert-warning"><b>Safety Warning:</b> {primary_alert}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="alert-normal"><b>Active Synthetic Scenario:</b> {demo_scenario}. Controlled testing environment operating normally.</div>', unsafe_allow_html=True)
+
+    tab_status, tab_traj, tab_log = st.tabs([
+        "Entity Status",
+        "Trajectory & Next-State Forecast",
+        "Incident & Safety Log",
+    ])
+
+    with tab_status:
+        if len(status_rows) > 0:
+            st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No simulated entities in active scenario.")
+
+    with tab_traj:
+        if prediction_summary and prediction_summary.is_sufficient_data:
+            pred_prob_pct = int(prediction_summary.probability * 100)
+            pred_zone = "Restricted Zone" if prediction_summary.trajectory_trend == "Approaching Restricted Zone" else "Safe"
+            pred_zone_color = "#DC2626" if pred_zone == "Restricted Zone" else "#0284C7"
+
+            pred_html = f"""<div class="forecast-box">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+<span style="color: #64748B; font-size: 0.80rem; font-weight: 600;">Next-State Forecast</span>
+<span style="background: rgba(2, 132, 199, 0.10); color: #0284C7; font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">Markov Model</span>
+</div>
+<h3 style="margin: 0 0 10px 0; color: {'#0F172A' if is_light else '#F8FAFC'}; font-size: 1.05rem;">Predicted Activity: {prediction_summary.predicted_next_activity}</h3>
+<div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px;">
+<div>Current State: <b style="color: #059669;">{prediction_summary.current_activity}</b></div>
+<div>Predicted Zone: <b style="color: {pred_zone_color};">{pred_zone}</b></div>
+<div>Probability: <b style="color: #0284C7;">{pred_prob_pct}%</b></div>
+</div>
+<div style="background: rgba(0,0,0,0.06); border-radius: 4px; height: 6px; width: 100%; overflow: hidden; margin-bottom: 8px;">
+<div style="background: #0284C7; width: {pred_prob_pct}%; height: 100%;"></div>
+</div>
+<div style="font-size: 0.78rem; color: #64748B;">
+Trajectory Trend: <span style="color: {'#0F172A' if is_light else '#F8FAFC'}; font-weight: 600;">{prediction_summary.trajectory_trend}</span> | Coordinate: <code>X:{prediction_summary.predicted_future_position[0]}, Y:{prediction_summary.predicted_future_position[1]}</code>
+</div>
+</div>"""
+            st.markdown(pred_html, unsafe_allow_html=True)
+        else:
+            st.info("Simulating trajectory vectors.")
+
+    with tab_log:
+        if len(incident_logs) > 0:
+            st.dataframe(pd.DataFrame(incident_logs), use_container_width=True, hide_index=True)
+        else:
+            st.success("Scenario nominal — no safety breaches detected.")

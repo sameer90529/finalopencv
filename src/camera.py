@@ -32,10 +32,15 @@ class VideoStream:
         self.fps_limit = fps_limit
         self.use_directshow = use_directshow
 
+        # Parse source if it's a numeric string (e.g. "0" or "-1")
+        if isinstance(source, str):
+            if source.isdigit() or (source.startswith("-") and source[1:].isdigit()):
+                self.source = int(source)
+
         self.cap: Optional[cv2.VideoCapture] = None
         self.is_opened = False
-        self.is_synthetic_mode = (source == -1 or source == "-1")
-        self.is_video_file = isinstance(source, str) and os.path.isfile(source)
+        self.is_synthetic_mode = (self.source == -1)
+        self.is_video_file = isinstance(self.source, str) and os.path.isfile(self.source)
 
         # Video File Metadata
         self.total_frames = 0
@@ -64,7 +69,7 @@ class VideoStream:
             return True
 
         # 2. Real Video File Source
-        if isinstance(self.source, str):
+        if self.is_video_file:
             if not os.path.exists(self.source):
                 print(f"[VideoStream] Error: Video file '{self.source}' not found.")
                 self.is_opened = False
@@ -88,13 +93,14 @@ class VideoStream:
         camera_idx = int(self.source)
         print(f"[VideoStream] Attempting to open real hardware webcam index {camera_idx}...")
 
-        # Default backend
-        self.cap = cv2.VideoCapture(camera_idx)
-
-        # Fallback to DirectShow on Windows if initial open fails
-        if not self.cap.isOpened() and self.use_directshow and os.name == "nt":
-            print(f"[VideoStream] Retrying webcam index {camera_idx} with DirectShow backend...")
+        # Fast direct initialization with DirectShow backend on Windows to avoid MSMF driver timeout delay
+        if os.name == "nt" and self.use_directshow:
             self.cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
+        else:
+            self.cap = cv2.VideoCapture(camera_idx)
+
+        if not self.cap.isOpened() and os.name == "nt":
+            self.cap = cv2.VideoCapture(camera_idx)
 
         if self.cap.isOpened():
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_width)
