@@ -523,6 +523,12 @@ with st.sidebar:
 
     st.markdown("<hr style='border-color: rgba(0,0,0,0.08); margin: 8px 0;'>", unsafe_allow_html=True)
     st.markdown("<p style='font-size: 0.72rem; color: #64748B; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 4px 0 6px 0;'>Select Workspace</p>", unsafe_allow_html=True)
+    if "workspace_select" not in st.session_state:
+        st.session_state.workspace_select = "Scenario Simulator" if os.environ.get("RENDER") else "Live Camera"
+
+    default_idx = ["Live Camera", "Video Intelligence", "Scenario Simulator"].index(
+        st.session_state.get("workspace_select", "Live Camera")
+    )
     workspace = st.radio(
         "Workspace Selection",
         [
@@ -530,9 +536,11 @@ with st.sidebar:
             "Video Intelligence",
             "Scenario Simulator",
         ],
-        index=0,
+        index=default_idx,
+        key="workspace_radio",
         label_visibility="collapsed",
     )
+    st.session_state.workspace_select = workspace
 
     st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
 
@@ -758,10 +766,20 @@ Camera 0 Connected
     if not stream.is_opened:
         alert_placeholder.markdown(
             f"""<div class="alert-critical">
-<b>Camera Unavailable:</b> Unable to open hardware camera at device index <code>{camera_idx}</code>. Please allow camera permissions or switch to <b>Video Intelligence</b> workspace.
+<b>Camera Unavailable (Cloud Environment):</b> Unable to open physical webcam at device index <code>{camera_idx}</code>. In cloud hosting (Render), physical webcams are not attached to cloud servers.<br><br>
+👉 <b>Click below or select from the left sidebar to run the live AI engine:</b>
 </div>""",
             unsafe_allow_html=True,
         )
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            if st.button("🚀 Launch Scenario Simulator", type="primary", use_container_width=True):
+                st.session_state.workspace_select = "Scenario Simulator"
+                st.rerun()
+        with col_act2:
+            if st.button("📹 Switch to Video Intelligence (Upload Video)", use_container_width=True):
+                st.session_state.workspace_select = "Video Intelligence"
+                st.rerun()
         st.stop()
 
     prev_time = time.time()
