@@ -768,24 +768,17 @@ Camera 0 Connected
 
     stream = VideoStream(source=int(camera_idx), width=target_w, height=target_h, use_directshow=use_dshow)
 
+    is_cloud_synthetic = False
     if not stream.is_opened:
+        # Seamless cloud fallback: automatically switch to built-in synthetic perception stream
+        stream = VideoStream(source=-1, width=target_w, height=target_h)
+        is_cloud_synthetic = True
         alert_placeholder.markdown(
-            f"""<div class="alert-critical">
-<b>Camera Unavailable (Cloud Environment):</b> Unable to open physical webcam at device index <code>{camera_idx}</code>. In cloud hosting (Render), physical webcams are not attached to cloud servers.<br><br>
-👉 <b>Click below or select from the left sidebar to run the live AI engine:</b>
+            """<div style="background: rgba(2, 132, 199, 0.10); border: 1px solid rgba(2, 132, 199, 0.30); border-left: 4px solid #0284C7; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 0.84rem; line-height: 1.5;">
+<b style="color: #0284C7;">Autonomous Perception Test Bench Active:</b> Hardware webcam not detected on cloud server. <b>Synthetic Perception Stream</b> is running live with full YOLOv8-Pose estimation, Digital Twin synchronization, and Markov risk modeling.
 </div>""",
             unsafe_allow_html=True,
         )
-        col_act1, col_act2 = st.columns(2)
-        with col_act1:
-            if st.button("🚀 Launch Scenario Simulator", type="primary", use_container_width=True):
-                st.session_state.workspace_select = "Scenario Simulator"
-                st.rerun()
-        with col_act2:
-            if st.button("📹 Switch to Video Intelligence (Upload Video)", use_container_width=True):
-                st.session_state.workspace_select = "Video Intelligence"
-                st.rerun()
-        st.stop()
 
     prev_time = time.time()
     fps = 0.0
